@@ -221,11 +221,10 @@ export const submitQuizResult = async (
 
   const formattedPayload = {
     ...payload,
-    pCode: numericPCode,
     p_code: numericPCode,
   };
 
-  return api.post<QuizResultResponse>('/quiz/result/submit', formattedPayload);
+  return api.post<QuizResultResponse>('/quiz/result', formattedPayload);
 };
 
 export const getQuizResults = async (
