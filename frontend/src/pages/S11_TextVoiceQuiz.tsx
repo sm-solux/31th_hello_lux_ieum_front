@@ -16,7 +16,7 @@ export default function S11_TextVoiceQuiz() {
   const [currentIndex, setCurrentIndex] = useState<number>(0);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  
+  // 세션 데이터 정리 함수
   const clearQuizSessionData = () => {
     const keysToRemove = [
       'quizList',
@@ -24,15 +24,16 @@ export default function S11_TextVoiceQuiz() {
       'currentQuizElapsedTime',
       'tempQuizHintStep',
       'totalHintCount',
+      'totalHintId',
       'correctQuizCount',
       'completedActivityCount',
+      'totalSpentTime',
       'set_id',
       'setId'
     ];
     keysToRemove.forEach((key) => sessionStorage.removeItem(key));
   };
 
-  
   const getSafePCode = (quizItem?: QuizItem): string => {
     const sessionPCode = sessionStorage.getItem('p_code') || sessionStorage.getItem('pCode');
     const itemPCode = quizItem?.p_code ?? (quizItem as any)?.pCode;
@@ -69,7 +70,6 @@ export default function S11_TextVoiceQuiz() {
     const loadQuizData = () => {
       setIsLoading(true);
       try {
-        
         const token = getToken();
         if (!token) {
           console.warn('인증 토큰이 없습니다. 로그인 페이지로 이동합니다.');
@@ -87,11 +87,9 @@ export default function S11_TextVoiceQuiz() {
         const currentSessionPCode = sessionStorage.getItem('p_code') || sessionStorage.getItem('pCode');
         const currentInternalCode = sessionStorage.getItem('internalCode') || sessionStorage.getItem('internal_code');
 
-       
         if (storedQuizzes.length > 0 && (currentSessionPCode || currentInternalCode)) {
           const quizPCode = storedQuizzes[0]?.p_code || (storedQuizzes[0] as any)?.pCode;
           
-         
           const cleanQuizCode = quizPCode ? String(quizPCode).trim() : '';
           const cleanSessionPCode = currentSessionPCode ? String(currentSessionPCode).trim() : '';
           const cleanInternalCode = currentInternalCode ? String(currentInternalCode).trim() : '';
@@ -114,7 +112,6 @@ export default function S11_TextVoiceQuiz() {
           storedIndex = storedQuizzes.length - 1;
         }
 
-        
         if (storedQuizzes.length > 0 && storedQuizzes[storedIndex]) {
           const currentQuizData = storedQuizzes[storedIndex] as any;
           const rawCategory = currentQuizData?.quiz_category ?? currentQuizData?.quizCategory ?? currentQuizData?.category ?? '';
@@ -150,6 +147,7 @@ export default function S11_TextVoiceQuiz() {
   const [feedbackMessage, setFeedbackMessage] = useState<string>('잘 하셨어요!');
   const [thisQuizIsCorrect, setThisQuizIsCorrect] = useState<boolean | undefined>(undefined);
 
+  // === 시간 관련 Ref 설정 ===
   const startTimeRef = useRef<number>(Date.now());
   const initialAccumulatedTimeRef = useRef<number>(0); 
 
@@ -160,7 +158,7 @@ export default function S11_TextVoiceQuiz() {
   const [totalSolvedCount, setTotalSolvedCount] = useState<number>(() => Number(sessionStorage.getItem('completedActivityCount') || 0));
   const [correctCount, setCorrectCount] = useState<number>(() => Number(sessionStorage.getItem('correctQuizCount') || 0));
 
-  
+  // 뒤로가기 방지
   useEffect(() => {
     const preventGoBack = () => window.history.pushState(null, '', window.location.href);
     window.history.pushState(null, '', window.location.href);
@@ -168,7 +166,7 @@ export default function S11_TextVoiceQuiz() {
     return () => window.removeEventListener('popstate', preventGoBack);
   }, []);
 
-  
+  // 문제 변경 및 초기 타이머 로직
   useEffect(() => {
     setIsSubmitted(false);
     setIsListening(false);
@@ -180,8 +178,8 @@ export default function S11_TextVoiceQuiz() {
     const savedTempHintStep = parseInt(sessionStorage.getItem('tempQuizHintStep') || '0', 10);
     setMaxHintStepThisQuiz(savedTempHintStep);
 
-    const savedAccumulated = parseFloat(sessionStorage.getItem('currentQuizElapsedTime') || '0');
-    initialAccumulatedTimeRef.current = savedAccumulated;
+    const savedQuizAccumulated = parseFloat(sessionStorage.getItem('currentQuizElapsedTime') || '0');
+    initialAccumulatedTimeRef.current = savedQuizAccumulated;
     startTimeRef.current = Date.now();
   }, [currentIndex]);
 
@@ -206,13 +204,24 @@ export default function S11_TextVoiceQuiz() {
     if (maxStep > maxHintStepThisQuiz) setMaxHintStepThisQuiz(maxStep);
   };
 
+  const accumulateQuizTime = (spentSeconds: number) => {
+    const prevTotal = Number(sessionStorage.getItem('totalSpentTime') || '0');
+    const newTotal = prevTotal + spentSeconds;
+    sessionStorage.setItem('totalSpentTime', String(newTotal));
+  };
+
+  // 문제 정답 제출 시 처리
   const handleSuccessSubmit = async (finalDuration: string, answerText?: string) => {
     if (!currentQuiz) return;
 
     const sessionSpent = (Date.now() - startTimeRef.current) / 1000;
-    const totalSpentSeconds = (initialAccumulatedTimeRef.current + sessionSpent).toFixed(1);
+    const currentQuizSpentSeconds = initialAccumulatedTimeRef.current + sessionSpent;
+    const totalSpentSecondsStr = currentQuizSpentSeconds.toFixed(1);
 
-    setElapsedTime(finalDuration !== '0.0' ? finalDuration : totalSpentSeconds);
+    const quizTimeValue = finalDuration !== '0.0' ? parseFloat(finalDuration) : currentQuizSpentSeconds;
+    setElapsedTime(finalDuration !== '0.0' ? finalDuration : `${totalSpentSecondsStr}초`);
+
+    accumulateQuizTime(quizTimeValue);
 
     sessionStorage.removeItem('currentQuizElapsedTime');
     sessionStorage.removeItem('tempQuizHintStep');
@@ -272,11 +281,17 @@ export default function S11_TextVoiceQuiz() {
     }
   };
 
+  // 다음 활동 클릭 시 처리
   const handleNextPage = async (e?: React.MouseEvent<HTMLButtonElement>) => {
     if (e) e.preventDefault();
 
+    // 제출되지 않은 경우 스킵 처리 및 시간 누적 반영
     if (!isSubmitted && currentQuiz) {
       setThisQuizIsCorrect(false);
+
+      const sessionSpent = (Date.now() - startTimeRef.current) / 1000;
+      const currentQuizSpentSeconds = initialAccumulatedTimeRef.current + sessionSpent;
+      accumulateQuizTime(currentQuizSpentSeconds);
 
       const pCode = getSafePCode(currentQuiz);
       const rawSetId = currentQuiz.set_id ?? (currentQuiz as any)?.setId ?? sessionStorage.getItem('set_id') ?? sessionStorage.getItem('setId') ?? 1;
@@ -305,6 +320,11 @@ export default function S11_TextVoiceQuiz() {
         const validSolvedCount = Number(sessionStorage.getItem('completedActivityCount') || totalSolvedCount);
         const validCorrectCount = Number(sessionStorage.getItem('correctQuizCount') || correctCount);
         const totalHint = Number(sessionStorage.getItem('totalHintCount') || hintCount);
+        
+        const accumulatedTotalSpentTime = Number(sessionStorage.getItem('totalSpentTime') || '0');
+        const calculatedAvgResponseTime = validSolvedCount > 0 
+          ? Math.round(accumulatedTotalSpentTime / validSolvedCount) 
+          : 0;
 
         const finalPayload: QuizResultPayload = {
           setId: finalSetId,
@@ -313,6 +333,8 @@ export default function S11_TextVoiceQuiz() {
           correctCount: validCorrectCount,   
           hint: totalHint,
           caculate: "0", 
+          avg_response_time: calculatedAvgResponseTime, 
+          avgResponseTime: calculatedAvgResponseTime,
           feedbackContent: `총 ${validSolvedCount}문제 제출 중 ${validCorrectCount}문제를 맞추셨습니다.`
         };
 
@@ -345,23 +367,24 @@ export default function S11_TextVoiceQuiz() {
     }
   };
 
+  // 중간 그만두기 처리
   const handleQuit = (e?: React.MouseEvent<HTMLButtonElement>) => {
     if (e) e.preventDefault();
-
-    const targetIndex = isSubmitted ? currentIndex + 1 : currentIndex;
 
     if (!isSubmitted) {
       const sessionSpent = (Date.now() - startTimeRef.current) / 1000;
       const totalAccumulated = initialAccumulatedTimeRef.current + sessionSpent;
       sessionStorage.setItem('currentQuizElapsedTime', String(totalAccumulated));
       sessionStorage.setItem('tempQuizHintStep', String(maxHintStepThisQuiz));
+      sessionStorage.setItem('currentQuizIndex', String(currentIndex));
     } else {
       sessionStorage.removeItem('currentQuizElapsedTime');
       sessionStorage.removeItem('tempQuizHintStep');
+      const nextIdx = Math.min(currentIndex + 1, quizList.length - 1);
+      sessionStorage.setItem('currentQuizIndex', String(nextIdx));
     }
 
     sessionStorage.setItem('todayActivityQuit', 'true');
-    sessionStorage.setItem('currentQuizIndex', String(targetIndex));
     sessionStorage.setItem('completedActivityCount', String(totalSolvedCount));
 
     navigate('/patient-home');

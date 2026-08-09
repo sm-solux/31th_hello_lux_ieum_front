@@ -14,12 +14,13 @@ export default function S13_RecallVoiceChat() {
   const [currentIndex, setCurrentIndex] = useState<number>(0);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-
+  // 세션 정리 시 누적 시간 데이터도 함께 삭제
   const clearQuizSessionData = () => {
     const keysToRemove = [
       'quizList',
       'currentQuizIndex',
       'currentQuizElapsedTime',
+      'totalSpentTime', // 키 이름을 'totalSpentTime'으로 통일
       'completedActivityCount',
       'correctQuizCount',
       'totalHintCount',
@@ -29,7 +30,6 @@ export default function S13_RecallVoiceChat() {
     keysToRemove.forEach((key) => sessionStorage.removeItem(key));
   };
 
- 
   const getSafePCode = (quizItem?: QuizItem) => {
     const sessionPCode = sessionStorage.getItem('p_code');
     if (sessionPCode && isNaN(Number(sessionPCode))) {
@@ -44,7 +44,6 @@ export default function S13_RecallVoiceChat() {
     return sessionPCode || quizItem?.p_code || quizItem?.pCode || 'HH5N7S';
   };
 
-  
   const getNumericPCode = (quizItem?: QuizItem): number => {
     if (quizItem?.p_code !== undefined && !isNaN(Number(quizItem.p_code))) {
       return Number(quizItem.p_code);
@@ -70,7 +69,6 @@ export default function S13_RecallVoiceChat() {
     const loadQuizData = () => {
       setIsLoading(true);
       try {
-        
         const token = getToken();
         if (!token) {
           console.warn('인증 토큰이 없습니다. 로그인 페이지로 이동합니다.');
@@ -94,7 +92,6 @@ export default function S13_RecallVoiceChat() {
           storedIndex = storedQuizzes.length - 1;
         }
 
-        
         if (storedQuizzes.length > 0 && storedQuizzes[storedIndex]) {
           const currentQuizData = storedQuizzes[storedIndex] as any;
           const rawCategory = currentQuizData?.quizCategory ?? currentQuizData?.quiz_category ?? currentQuizData?.category ?? currentQuizData?.level ?? '';
@@ -162,7 +159,6 @@ export default function S13_RecallVoiceChat() {
   const startTimeRef = useRef<number>(Date.now());
   const initialAccumulatedTimeRef = useRef<number>(0);
 
- 
   useEffect(() => {
     const preventGoBack = () => {
       window.history.pushState(null, '', window.location.href);
@@ -175,7 +171,6 @@ export default function S13_RecallVoiceChat() {
     };
   }, []);
 
- 
   useEffect(() => {
     setSelectedOption(null);
     setIsSubmitted(false);
@@ -190,6 +185,13 @@ export default function S13_RecallVoiceChat() {
   }, [currentIndex]);
 
   const optionsList: string[] = currentQuiz?.options || [];
+
+  // 문제 소요 시간을 세션스토리지 totalSpentTime에 누적하는 헬퍼 함수
+  const accumulateQuizTime = (spentSeconds: number) => {
+    const prevTotal = Number(sessionStorage.getItem('totalSpentTime') || '0');
+    const newTotal = prevTotal + spentSeconds;
+    sessionStorage.setItem('totalSpentTime', String(newTotal));
+  };
 
   const handleSubmit = async () => {
     if (!currentQuiz) {
@@ -207,11 +209,15 @@ export default function S13_RecallVoiceChat() {
     setIsSubmitted(true);
     isSubmittedRef.current = true;
 
+    // 현재 문제 소요 시간 산출 및 누적
     const sessionSpent = (Date.now() - startTimeRef.current) / 1000;
-    const totalSpentSeconds = (initialAccumulatedTimeRef.current + sessionSpent).toFixed(1);
-
-    setElapsedTime(totalSpentSeconds);
+    const currentQuizSpent = initialAccumulatedTimeRef.current + sessionSpent;
+    
+    setElapsedTime(currentQuizSpent.toFixed(1));
     sessionStorage.removeItem('currentQuizElapsedTime');
+
+    // totalSpentTime 키로 시간 누적
+    accumulateQuizTime(currentQuizSpent);
 
     const selectedAnswerText = optionsList[selectedOption];
     
@@ -259,7 +265,12 @@ export default function S13_RecallVoiceChat() {
   const handleNextPage = async (e?: React.MouseEvent<HTMLButtonElement>) => {
     if (e) e.preventDefault();
 
+    // 제출하지 않고 바로 다음으로 넘어갈 때(스킵) 시간 누적 처리
     if (!isSubmittedRef.current && currentQuiz) {
+      const sessionSpent = (Date.now() - startTimeRef.current) / 1000;
+      const currentQuizSpent = initialAccumulatedTimeRef.current + sessionSpent;
+      accumulateQuizTime(currentQuizSpent);
+
       const pCode = getSafePCode(currentQuiz);
       const setId = Number(currentQuiz?.set_id || currentQuiz?.setId || 1);
       const quizNum = Number(currentQuiz?.quiz_num || currentQuiz?.quizNum || 1);
@@ -282,7 +293,7 @@ export default function S13_RecallVoiceChat() {
 
     const nextIndex = currentIndex + 1;
 
-   
+    // 모든 퀴즈 완료 시 최종 결과 제출
     if (nextIndex >= quizList.length) {
       try {
         const numericPCode = getNumericPCode(currentQuiz);
@@ -292,13 +303,21 @@ export default function S13_RecallVoiceChat() {
         const validCorrectCount = Number(sessionStorage.getItem('correctQuizCount') || correctCount);
         const totalHint = parseInt(sessionStorage.getItem('totalHintId') || sessionStorage.getItem('totalHintCount') || '0', 10);
 
-        const finalPayload: QuizResultPayload = {
+        // 통일된 totalSpentTime 키로 총 누적 시간 조회 후 평균 계산
+        const totalSpentTime = parseFloat(sessionStorage.getItem('totalSpentTime') || '0');
+        const calculatedAvgResponseTime = validSolvedCount > 0 
+          ? Math.round(totalSpentTime / validSolvedCount) 
+          : 0;
+
+        const finalPayload: QuizResultPayload & { avgResponseTime?: number } = {
           setId: finalSetId,
           pCode: numericPCode,
           totalCount: validSolvedCount,
           correctCount: validCorrectCount,
           hint: totalHint,
           caculate: "0",
+          avg_response_time: calculatedAvgResponseTime,
+          avgResponseTime: calculatedAvgResponseTime,
           feedbackContent: "오늘도 퀴즈를 잘 마쳤습니다!"
         };
 

@@ -71,7 +71,9 @@ export interface QuizResultPayload {
   totalCount: number;
   correctCount: number;
   hint: number;
-  caculate: string;       
+  caculate: string;      
+  avg_response_time?: number; 
+  avgResponseTime?: number; 
   feedbackContent: string;
 }
 
@@ -93,6 +95,7 @@ export interface QuizResultDetailResponse {
   caculate?: string;      
   calculate?: string;      
   avg_response_time?: number;
+  avgResponseTime?: number;
   emotion_status?: string;
   health_status?: string;
   sleep_status?: string;

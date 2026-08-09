@@ -39,6 +39,7 @@ export default function S10_DailyHealthCheck() {
       'quizList',
       'currentQuizIndex',
       'currentQuizElapsedTime',
+      'totalSpentTime',
       'tempQuizHintStep',
       'completedActivityCount',
       'totalHintCount',

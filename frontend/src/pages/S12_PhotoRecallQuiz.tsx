@@ -16,7 +16,6 @@ export default function S12_PhotoRecallQuiz() {
   const [currentIndex, setCurrentIndex] = useState<number>(0);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-
   const getSafePCode = (quizItem?: QuizItem) => {
     const sessionPCode = sessionStorage.getItem('p_code');
     if (sessionPCode && isNaN(Number(sessionPCode))) {
@@ -31,7 +30,6 @@ export default function S12_PhotoRecallQuiz() {
     return sessionPCode || quizItem?.p_code || quizItem?.pCode || 'HH5N7S';
   };
 
-
   const clearQuizSessionData = () => {
     const keysToRemove = [
       'quizList',
@@ -39,8 +37,10 @@ export default function S12_PhotoRecallQuiz() {
       'currentQuizElapsedTime',
       'tempQuizHintStep',
       'totalHintCount',
+      'totalHintId',
       'correctQuizCount',
       'completedActivityCount',
+      'totalSpentTime',
     ];
     keysToRemove.forEach((key) => sessionStorage.removeItem(key));
   };
@@ -49,7 +49,6 @@ export default function S12_PhotoRecallQuiz() {
     const loadQuizData = () => {
       setIsLoading(true);
       try {
-    
         const token = getToken();
         if (!token) {
           console.warn('인증 토큰이 없습니다. 로그인 페이지로 이동합니다.');
@@ -73,7 +72,6 @@ export default function S12_PhotoRecallQuiz() {
           storedIndex = storedQuizzes.length - 1;
         }
 
-      
         if (storedQuizzes.length > 0 && storedQuizzes[storedIndex]) {
           const currentQuizData = storedQuizzes[storedIndex] as any;
           const rawCategory = currentQuizData?.quizCategory ?? currentQuizData?.quiz_category ?? currentQuizData?.category ?? currentQuizData?.level ?? '';
@@ -138,7 +136,6 @@ export default function S12_PhotoRecallQuiz() {
     return Number(sessionStorage.getItem('correctQuizCount') || 0);
   });
 
-
   useEffect(() => {
     const preventGoBack = () => {
       window.history.pushState(null, '', window.location.href);
@@ -150,7 +147,6 @@ export default function S12_PhotoRecallQuiz() {
       window.removeEventListener('popstate', preventGoBack);
     };
   }, []);
-
 
   useEffect(() => {
     setIsSubmitted(false);
@@ -195,14 +191,23 @@ export default function S12_PhotoRecallQuiz() {
     }
   };
 
+  const accumulateQuizTime = (spentSeconds: number) => {
+    const prevTotal = Number(sessionStorage.getItem('totalSpentTime') || '0');
+    const newTotal = prevTotal + spentSeconds;
+    sessionStorage.setItem('totalSpentTime', String(newTotal));
+  };
+
   const handleSuccessSubmit = async (finalDuration: string, userSpokenAnswer?: string) => {
     if (!currentQuiz) return;
 
     const sessionSpent = (Date.now() - startTimeRef.current) / 1000;
-    const totalSpentSeconds = (initialAccumulatedTimeRef.current + sessionSpent).toFixed(1);
+    const currentQuizSpentSeconds = initialAccumulatedTimeRef.current + sessionSpent;
+    const totalSpentSecondsStr = currentQuizSpentSeconds.toFixed(1);
 
-    const actualDuration = finalDuration !== '0.0' ? finalDuration : totalSpentSeconds;
-    setElapsedTime(actualDuration);
+    const quizTimeValue = finalDuration !== '0.0' ? parseFloat(finalDuration) : currentQuizSpentSeconds;
+    setElapsedTime(finalDuration !== '0.0' ? finalDuration : totalSpentSecondsStr);
+
+    accumulateQuizTime(quizTimeValue);
 
     sessionStorage.removeItem('currentQuizElapsedTime');
     sessionStorage.removeItem('tempQuizHintStep');
@@ -270,6 +275,10 @@ export default function S12_PhotoRecallQuiz() {
     if (!isSubmitted && currentQuiz) {
       setThisQuizIsCorrect(false);
 
+      const sessionSpent = (Date.now() - startTimeRef.current) / 1000;
+      const currentQuizSpentSeconds = initialAccumulatedTimeRef.current + sessionSpent;
+      accumulateQuizTime(currentQuizSpentSeconds);
+
       const pCode = String(getSafePCode(currentQuiz)); 
       const setId = Number(currentQuiz.set_id || currentQuiz.setId || 1);
       const quizNum = Number(currentQuiz.quiz_num || currentQuiz.quizNum || 1);
@@ -295,16 +304,26 @@ export default function S12_PhotoRecallQuiz() {
       try {
         const finalPCodeStr = String(getSafePCode(currentQuiz)); 
         const finalSetId = Number(currentQuiz?.set_id || currentQuiz?.setId || 1);
-        const totalHint = Number(sessionStorage.getItem('totalHintCount') || 0);
+        
+        const validSolvedCount = Number(sessionStorage.getItem('completedActivityCount') || totalSolvedCount);
+        const validCorrectCount = Number(sessionStorage.getItem('correctQuizCount') || correctCount);
+        const totalHint = Number(sessionStorage.getItem('totalHintCount') || hintCount);
+
+        const accumulatedTotalSpentTime = Number(sessionStorage.getItem('totalSpentTime') || '0');
+        const calculatedAvgResponseTime = validSolvedCount > 0 
+          ? Math.round(accumulatedTotalSpentTime / validSolvedCount) 
+          : 0;
 
         const finalPayload: QuizResultPayload = {
           setId: finalSetId,
           pCode: finalPCodeStr as any,
-          totalCount: totalSolvedCount, 
-          correctCount: correctCount,   
+          totalCount: validSolvedCount, 
+          correctCount: validCorrectCount,   
           hint: totalHint,
           caculate: "0",
-          feedbackContent: `총 ${totalSolvedCount}문제 제출 중 ${correctCount}문제를 맞추셨습니다. 오늘도 수고하셨습니다!`
+          avg_response_time: calculatedAvgResponseTime,
+          avgResponseTime: calculatedAvgResponseTime,
+          feedbackContent: `총 ${validSolvedCount}문제 제출 중 ${validCorrectCount}문제를 맞추셨습니다. 오늘도 수고하셨습니다!`
         };
 
         await submitQuizResult(finalPayload);
