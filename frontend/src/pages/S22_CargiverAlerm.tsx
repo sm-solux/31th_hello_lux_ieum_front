@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import CaregiverSidebar from '../components/CaregiverSidebar';
 import redEmark from '../assets/redEmark.svg';
+import { getPatient } from '../api/patient';
+import { getPCode } from '../utils/pcode';
 
 const DESIGN_W = 1920;
 const DESIGN_H = 1765;
@@ -12,9 +14,9 @@ const F: React.CSSProperties = {
 };
 
 const DUMMY_PATIENT = {
-  name: '홍길동',
-  birth_date: '1950-01-01',
-  dignosis: '경도인지장애',
+  name: '-',
+  birth_date: '',
+  dignosis: '-',
 };
 
 const RELATED_DATA = [
@@ -48,10 +50,18 @@ const SAVE_BTN_TOP = MEMO_BOX_TOP + 110 + 80;         // 1497
 export default function S22_CargiverAlerm() {
   const navigate = useNavigate();
   const [scale, setScale] = useState(1);
-  const patient = DUMMY_PATIENT;
+  const [patient, setPatient] = useState(DUMMY_PATIENT);
   const [selectedActions, setSelectedActions] = useState<Set<number>>(new Set([0]));
-  const [actionMemo, setActionMemo] = useState('의료진과 상의 후 판단하기로 함. 다음 진료 시 언급 예정.');
+  const [actionMemo, setActionMemo] = useState('');
   const [savedMsg, setSavedMsg] = useState(false);
+
+  useEffect(() => {
+    const pCode = getPCode();
+    if (!pCode) return;
+    getPatient(pCode)
+      .then(data => setPatient({ name: data.name, birth_date: data.birth_date || '', dignosis: data.diagnosis }))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const update = () => setScale(window.innerWidth / DESIGN_W);
