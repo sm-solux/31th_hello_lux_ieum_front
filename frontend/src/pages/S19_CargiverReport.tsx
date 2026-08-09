@@ -50,34 +50,49 @@ const LINE_DATA_DEFAULT: Record<string, number[]> = {
 const PERIOD_OPTIONS = ['최근 7일', '최근 30일', '직접 선택'];
 
 const STATS_DEFAULT = [
-  { label: '7일 평균 성공률', value: '-'  },
-  { label: '평균 응답 시간',  value: '-' },
+  { label: '7일 평균 성공률', value: '-' },
+  { label: '평균 응답 시간', value: '-' },
   { label: '일평균 힌트 사용', value: '-' },
 ];
 
 const DAILY_SUMMARY_DEFAULT: { date: string; desc: string; isToday: boolean; tags: string[] }[] = [];
 
-// SVG 차트 상수
-// rect(그래프 영역) 612x360, 그 바깥에 Y라벨/X날짜
+
 const RECT_W = 612;
 const RECT_H = 360;
-const Y_LABEL_SPACE = 44; // Y축 라벨 공간 (rect 왼쪽)
-const X_LABEL_SPACE = 30; // X축 날짜 공간 (rect 아래)
-const SVG_W = RECT_W + Y_LABEL_SPACE;      // 656
-const SVG_H = RECT_H + X_LABEL_SPACE;      // 390
+const Y_LABEL_SPACE = 44;
+const X_LABEL_SPACE = 30;
+const SVG_W = RECT_W + Y_LABEL_SPACE; 
+const SVG_H = RECT_H + X_LABEL_SPACE; 
 
-// 라인이 그려지는 영역 (rect 내부에 약간 패딩)
 const PAD = 12;
-const PLOT_X = Y_LABEL_SPACE;              // rect 시작 x
-const PLOT_Y = PAD;                        // rect 내 top 패딩
-const PLOT_W = RECT_W - PAD * 2;           // 라인 가로 범위
-const PLOT_H = RECT_H - PAD * 2;           // 라인 세로 범위
+const PLOT_X = Y_LABEL_SPACE;
+const PLOT_Y = PAD;
+const PLOT_W = RECT_W - PAD * 2;
+const PLOT_H = RECT_H - PAD * 2;
+
+
+function getXPos(index: number, totalCount: number): number {
+  if (totalCount <= 1) {
+    return PLOT_X + PAD + PLOT_W / 2; 
+  }
+  return PLOT_X + PAD + (index / (totalCount - 1)) * PLOT_W;
+}
 
 function makeLine(values: number[], maxVal: number = 100): string {
+  if (!values || values.length === 0) return '';
+  
+ 
+  if (values.length === 1) {
+    const x = getXPos(0, 1);
+    const y = PLOT_Y + PLOT_H * (1 - Math.min(values[0], maxVal) / maxVal);
+    return `${x},${y} ${x},${y}`;
+  }
+
   return values
     .map((v, i) => {
-      const x = PLOT_X + PAD + (i / (values.length - 1)) * PLOT_W;
-      const y = PLOT_Y + PLOT_H * (1 - v / maxVal);
+      const x = getXPos(i, values.length);
+      const y = PLOT_Y + PLOT_H * (1 - Math.min(v, maxVal) / maxVal);
       return `${x},${y}`;
     })
     .join(' ');
@@ -106,25 +121,26 @@ export default function S19_CargiverReport() {
     return () => window.removeEventListener('resize', update);
   }, []);
 
-  // API: 환자 정보 로드
+ 
   useEffect(() => {
     const pCode = getPCode();
     if (!pCode) return;
+    
     getPatient(pCode)
       .then(data => setPatient({ name: data.name, birth_date: data.birth_date || '', dignosis: data.diagnosis }))
       .catch(() => {});
 
-    // 변화 추이 API 호출
+    
     getGuardianTrend(pCode, period === '최근 7일' ? 'week' : period === '최근 30일' ? 'month' : 'week')
       .then(data => {
-        if (data.labels.length > 0) {
+        if (data.labels && data.labels.length > 0) {
           setDates(data.labels);
           setLineData(prev => ({ ...prev, '답변 성공률': data.scores }));
         }
       })
       .catch(() => {});
 
-    // 퀴즈 결과 → STATS + 날짜별 상세 요약
+    
     const today = new Date();
     const from = new Date(today);
     from.setDate(today.getDate() - 7);
@@ -132,21 +148,35 @@ export default function S19_CargiverReport() {
 
     getQuizResults(pCode, fmt(from), fmt(today))
       .then(results => {
-        if (results.length > 0) {
-          // 평균 계산
-          const avgScore = Math.round(results.reduce((sum, r) => sum + (r.correct_count / r.total_count) * 100, 0) / results.length);
-          const avgHint = (results.reduce((sum, r) => sum + r.hint, 0) / results.length).toFixed(1);
+        if (results && results.length > 0) {
+          
+          const fetchedDates = results.map(r => r.date.slice(5).replace('-', '.'));
+          const successScores = results.map(r => Math.round((r.correct_count / (r.total_count || 1)) * 100));
+          const hintCounts = results.map(r => Number(r.hint) || 0);
+
+          setDates(fetchedDates);
+          setLineData(prev => ({
+            ...prev,
+            '답변 성공률': successScores,
+            '힌트 사용': hintCounts,
+            '응답 시간': [],
+          }));
+
+          
+          const avgScore = Math.round(successScores.reduce((a, b) => a + b, 0) / results.length);
+          const avgHint = (hintCounts.reduce((a, b) => a + b, 0) / results.length).toFixed(1);
+          
           setStats([
             { label: '7일 평균 성공률', value: `${avgScore}%` },
-            { label: '평균 응답 시간', value: '—' }, // API에 응답 시간 없음
+            { label: '평균 응답 시간', value: '—' },
             { label: '일평균 힌트 사용', value: `${avgHint}회` },
           ]);
 
-          // 최근 2건 → 날짜별 상세 요약
+          
           const recent = results.slice(-2).reverse();
           setDailySummary(recent.map((r, i) => ({
             date: r.date.replace(/-/g, '. ') + (i === 0 ? ' (오늘)' : ''),
-            desc: `답변 성공률 ${Math.round((r.correct_count / r.total_count) * 100)}% · 힌트 ${r.hint}회`,
+            desc: `답변 성공률 ${Math.round((r.correct_count / (r.total_count || 1)) * 100)}% · 힌트 ${r.hint || 0}회`,
             isToday: i === 0,
             tags: i === 0 ? [] : ['기록 있음'],
           })));
@@ -155,7 +185,6 @@ export default function S19_CargiverReport() {
       .catch(() => {});
   }, [period]);
 
-  // 체크박스: 한 개만 선택 가능
   const toggleLine = (key: string) => {
     setActiveLines(new Set([key]));
   };
@@ -209,7 +238,7 @@ export default function S19_CargiverReport() {
             {patient.name}님의 변화 추이
           </p>
 
-          {/* 그래프 박스: 936 × 551 */}
+          {/* 그래프 박스 */}
           <div
             style={{
               position: 'absolute',
@@ -310,20 +339,20 @@ export default function S19_CargiverReport() {
               <div style={{ display: 'flex', gap: 20, marginBottom: 16, flexWrap: 'wrap' }}>
                 {INDICATORS.filter(ind => activeLines.has(ind.key)).map(({ key, color }) => (
                   <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <div style={{ width: 24, height: 3, background: color, strokeWidth: 5,borderRadius: 2 }} />
+                    <div style={{ width: 24, height: 3, background: color, strokeWidth: 5, borderRadius: 2 }} />
                     <span style={{ ...F, fontSize: 13, color: '#0D0D0D' }}>{key}</span>
                   </div>
                 ))}
               </div>
 
-              {/* SVG 차트 - 그래프 박스 기준 top:102, left:210 */}
+              {/* SVG 차트 */}
               <svg
                 width={SVG_W}
                 height={SVG_H}
                 viewBox={`0 0 ${SVG_W} ${SVG_H}`}
                 style={{ position: 'absolute', top: 102, left: 210, display: 'block', overflow: 'visible' }}
               >
-                {/* 플롯 영역 배경 (rect 612x360) */}
+                {/* 플롯 영역 배경 */}
                 <rect
                   x={Y_LABEL_SPACE}
                   y={0}
@@ -375,25 +404,26 @@ export default function S19_CargiverReport() {
                 {/* 데이터 라인들 */}
                 {INDICATORS.filter(ind => activeLines.has(ind.key)).map(({ key, color }) => {
                   const maxVal = key === '답변 성공률' ? 100 : key === '힌트 사용' ? 10 : 120;
-                  if (!lineData[key] || lineData[key].length < 2) return null;
+                  // 데이터가 1개 이상이면 렌더링되도록 방어 로직 적용
+                  if (!lineData[key] || lineData[key].length < 1) return null;
                   return (
-                  <polyline
-                    key={key}
-                    points={makeLine(lineData[key], maxVal)}
-                    fill="none"
-                    stroke={color}
-                    strokeWidth="2.5"
-                    strokeLinejoin="round"
-                    strokeLinecap="round"
-                  />
+                    <polyline
+                      key={key}
+                      points={makeLine(lineData[key], maxVal)}
+                      fill="none"
+                      stroke={color}
+                      strokeWidth="2.5"
+                      strokeLinejoin="round"
+                      strokeLinecap="round"
+                    />
                   );
                 })}
 
                 {/* X축 날짜 (rect 아래) */}
                 {dates.map((d, i) => {
-                  const x = Y_LABEL_SPACE + PAD + (i / (dates.length - 1)) * PLOT_W;
+                  const x = getXPos(i, dates.length); 
                   return (
-                    <text key={d} x={x} y={RECT_H + 22}
+                    <text key={`${d}-${i}`} x={x} y={RECT_H + 22}
                       textAnchor="middle" fontSize="14" fill="#797980">{d}</text>
                   );
                 })}
