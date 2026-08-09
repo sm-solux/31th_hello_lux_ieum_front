@@ -30,11 +30,25 @@ export default function S10_DailyHealthCheck() {
   const [isMemoFocused, setIsMemoFocused] = useState<boolean>(false);
   const [memoText, setMemoText] = useState<string>('');
 
-  
   const [internalCode, setInternalCode] = useState<number | null>(null);
   const [pCodeStr, setPCodeStr] = useState<string>('');
 
-  
+  // 퀴즈 관련 이전 세션 잔재를 완전히 비워주는 헬퍼 함수
+  const clearQuizSessionData = () => {
+    const keysToRemove = [
+      'quizList',
+      'currentQuizIndex',
+      'currentQuizElapsedTime',
+      'tempQuizHintStep',
+      'completedActivityCount',
+      'totalHintCount',
+      'correctQuizCount',
+      'set_id',
+      'setId',
+    ];
+    keysToRemove.forEach((key) => sessionStorage.removeItem(key));
+  };
+
   useEffect(() => {
     sessionStorage.removeItem('todayHealthCondition');
     sessionStorage.removeItem('conditionStatus');
@@ -46,14 +60,14 @@ export default function S10_DailyHealthCheck() {
         const data = await getPatientMe();
 
         if (data) {
-          
-          const fetchedInternalCode = Number(data.internal_code || data.internalCode);
+          const fetchedInternalCode = Number(
+            data.internal_code || data.internalCode
+          );
           if (!isNaN(fetchedInternalCode) && fetchedInternalCode > 0) {
             setInternalCode(fetchedInternalCode);
             sessionStorage.setItem('internal_code', String(fetchedInternalCode));
           }
 
-          
           const fetchedPCode = data.p_code || data.pCode || '';
           if (fetchedPCode) {
             setPCodeStr(fetchedPCode);
@@ -86,7 +100,6 @@ export default function S10_DailyHealthCheck() {
     setBtnStatus('LOADING');
 
     try {
-      
       const rawInternalCode =
         internalCode ||
         Number(sessionStorage.getItem('internal_code')) ||
@@ -100,7 +113,6 @@ export default function S10_DailyHealthCheck() {
         return;
       }
 
-      
       const targetPCode =
         pCodeStr ||
         sessionStorage.getItem('p_code') ||
@@ -117,18 +129,18 @@ export default function S10_DailyHealthCheck() {
         memo: memoText,
       };
 
-      
       console.log(`🚀 daily-status 요청 전송: /patient/${targetInternalCode}/daily-status`);
       const postResponse = await postDailyStatus(targetInternalCode, statusPayload as any);
       console.log('✅ 일일 상태 저장 성공:', postResponse);
 
-      
       sessionStorage.setItem('todayHealthCondition', condition || '좋음');
       sessionStorage.setItem('conditionStatus', condition || '좋음');
       sessionStorage.setItem('sleepStatus', sleep || '잘 잤음');
       sessionStorage.setItem('moodStatus', mood || '안정적');
 
       
+      clearQuizSessionData();
+
       let quizzes: QuizItem[] = [];
       const quizCode = targetPCode || String(targetInternalCode);
 
@@ -147,7 +159,6 @@ export default function S10_DailyHealthCheck() {
         console.warn('⚠️ 퀴즈 조회 실패, Fallback 데이터 적용:', e);
       }
 
-     
       if (!quizzes || quizzes.length === 0) {
         quizzes = [
           {
@@ -164,33 +175,42 @@ export default function S10_DailyHealthCheck() {
         ];
       }
 
-      
       const firstQuiz = quizzes[0];
-      const extractedSetId = firstQuiz?.set_id ?? (firstQuiz as any)?.setId ?? 1;
+      const extractedSetId =
+        firstQuiz?.set_id ??
+        (firstQuiz as any)?.setId ??
+        (firstQuiz as any)?.setID ??
+        1;
+
       
       sessionStorage.setItem('set_id', String(extractedSetId));
       sessionStorage.setItem('setId', String(extractedSetId));
       console.log('✅ set_id 세션 저장 완료:', extractedSetId);
 
+     
       sessionStorage.setItem('quizList', JSON.stringify(quizzes));
       sessionStorage.setItem('currentQuizIndex', '0');
       sessionStorage.setItem('completedActivityCount', '0');
       sessionStorage.setItem('totalHintCount', '0');
+      sessionStorage.setItem('correctQuizCount', '0');
 
-      const rawCategory = firstQuiz?.quiz_category ?? (firstQuiz as any)?.category ?? 'choice';
+     
+      const rawCategory =
+        firstQuiz?.quiz_category ??
+        (firstQuiz as any)?.quizCategory ??
+        (firstQuiz as any)?.category ??
+        'choice';
       const category = String(rawCategory).toLowerCase().trim();
 
-      
-      if (category === 'choice' || category === '1') {
+      if (['choice', '1', 'multiple_choice', 'select'].includes(category)) {
         navigate('/patient-voicechat');
-      } else if (category === 'photo' || category === '2') {
+      } else if (['photo', '2', 'image', 'picture'].includes(category)) {
         navigate('/patient-photo');
-      } else if (category === 'text' || category === '3') {
+      } else if (['text', '3', 'sentence', 'subjective', 'short_answer'].includes(category)) {
         navigate('/patient-voicequiz');
       } else {
         navigate('/patient-voicechat');
       }
-      
     } catch (error) {
       console.error('❌ 저장 중 오류 발생:', error);
       setBtnStatus('FAIL');
@@ -277,7 +297,6 @@ export default function S10_DailyHealthCheck() {
           boxSizing: 'border-box',
         }}
       >
-       
         <h2 style={getSectionTitleStyle()}>오늘의 컨디션</h2>
         <div style={{ display: 'flex', gap: '14px', width: '100%', marginBottom: '70px' }}>
           {conditionOptions.map((item) => (
@@ -306,7 +325,6 @@ export default function S10_DailyHealthCheck() {
           ))}
         </div>
 
-        
         <h2 style={getSectionTitleStyle()}>수면 상태</h2>
         <div style={{ display: 'flex', gap: '14px', width: '100%', marginBottom: '70px' }}>
           {sleepOptions.map((item) => (
@@ -335,7 +353,6 @@ export default function S10_DailyHealthCheck() {
           ))}
         </div>
 
-        
         <h2 style={getSectionTitleStyle()}>식사 여부</h2>
         <div style={{ display: 'flex', gap: '16px', width: '100%', marginBottom: '70px' }}>
           <div
@@ -366,7 +383,6 @@ export default function S10_DailyHealthCheck() {
           </div>
         </div>
 
-       
         <h2 style={getSectionTitleStyle()}>통증 / 불편감</h2>
         <div style={{ display: 'flex', gap: '16px', width: '100%', marginBottom: '70px' }}>
           {['없음', '있음'].map((item) => (
@@ -387,7 +403,6 @@ export default function S10_DailyHealthCheck() {
           ))}
         </div>
 
-       
         <h2 style={getSectionTitleStyle()}>오늘 기분 상태</h2>
         <div
           style={{
@@ -422,7 +437,6 @@ export default function S10_DailyHealthCheck() {
           ))}
         </div>
 
-        
         <h2 style={getSectionTitleStyle()}>
           오늘 행동 및 인지 변화 (중복 선택 가능)
         </h2>
@@ -527,7 +541,6 @@ export default function S10_DailyHealthCheck() {
           }}
         />
 
-        
         <div
           style={{
             display: 'flex',

@@ -7,75 +7,147 @@ import QuizVoiceController from '../components/quizButton';
 import QuizResultCard from '../components/quizResultCard';
 
 import { submitQuizAnswer, submitQuizResult, type QuizItem, type QuizResultPayload } from '../api/patientApi';
+import { getToken } from '../utils/auth';
 
 export default function S11_TextVoiceQuiz() {
   const navigate = useNavigate();
 
-  const [quizList, setQuizList] = useState<QuizItem[] | null>(null);
+  const [quizList, setQuizList] = useState<QuizItem[]>([]);
   const [currentIndex, setCurrentIndex] = useState<number>(0);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+
+  
+  const clearQuizSessionData = () => {
+    const keysToRemove = [
+      'quizList',
+      'currentQuizIndex',
+      'currentQuizElapsedTime',
+      'tempQuizHintStep',
+      'totalHintCount',
+      'correctQuizCount',
+      'completedActivityCount',
+      'set_id',
+      'setId'
+    ];
+    keysToRemove.forEach((key) => sessionStorage.removeItem(key));
+  };
 
   
   const getSafePCode = (quizItem?: QuizItem): string => {
-    const sessionPCode = sessionStorage.getItem('p_code');
+    const sessionPCode = sessionStorage.getItem('p_code') || sessionStorage.getItem('pCode');
+    const itemPCode = quizItem?.p_code ?? (quizItem as any)?.pCode;
+
     if (sessionPCode && isNaN(Number(sessionPCode))) {
       return sessionPCode;
     }
-    const itemPCode = quizItem?.p_code ?? quizItem?.pCode;
     if (itemPCode !== undefined && itemPCode !== null && isNaN(Number(itemPCode))) {
       return String(itemPCode);
     }
-    return sessionPCode || 'HH5N7S';
+    return sessionPCode || String(itemPCode || 'HH5N7S');
   };
 
   const getNumericPCode = (quizItem?: QuizItem): number => {
-    const rawPCode = quizItem?.p_code ?? quizItem?.pCode;
-    if (rawPCode !== undefined && rawPCode !== null && !isNaN(Number(rawPCode))) {
-      return Number(rawPCode);
-    }
-
-    const sessionNum = sessionStorage.getItem('p_code_num') || sessionStorage.getItem('internal_code');
+    const sessionNum = sessionStorage.getItem('p_code_num') || sessionStorage.getItem('internal_code') || sessionStorage.getItem('internalCode');
     if (sessionNum && !isNaN(Number(sessionNum))) {
       return Number(sessionNum);
     }
 
-    const sessionPCode = sessionStorage.getItem('p_code');
+    const sessionPCode = sessionStorage.getItem('p_code') || sessionStorage.getItem('pCode');
     if (sessionPCode && !isNaN(Number(sessionPCode))) {
       return Number(sessionPCode);
+    }
+
+    const rawPCode = quizItem?.p_code ?? (quizItem as any)?.pCode;
+    if (rawPCode !== undefined && rawPCode !== null && !isNaN(Number(rawPCode))) {
+      return Number(rawPCode);
     }
 
     return 1;
   };
 
-  
   useEffect(() => {
-    try {
-      const storedQuizzesRaw = sessionStorage.getItem('quizList');
-      const storedQuizzes: QuizItem[] = storedQuizzesRaw ? JSON.parse(storedQuizzesRaw) : [];
-      
-      let storedIndex = parseInt(sessionStorage.getItem('currentQuizIndex') || '0', 10);
+    const loadQuizData = () => {
+      setIsLoading(true);
+      try {
+        
+        const token = getToken();
+        if (!token) {
+          console.warn('인증 토큰이 없습니다. 로그인 페이지로 이동합니다.');
+          navigate('/login', { replace: true });
+          return;
+        }
 
-      if (isNaN(storedIndex) || storedIndex < 0) {
-        storedIndex = 0;
-      }
+        const storedQuizzesRaw = sessionStorage.getItem('quizList');
+        let parsedData = storedQuizzesRaw ? JSON.parse(storedQuizzesRaw) : [];
 
-      if (storedQuizzes.length > 0 && storedIndex >= storedQuizzes.length) {
-        storedIndex = storedQuizzes.length - 1;
+        let storedQuizzes: QuizItem[] = Array.isArray(parsedData)
+          ? parsedData
+          : (parsedData?.data || parsedData?.quizzes || []);
+
+        const currentSessionPCode = sessionStorage.getItem('p_code') || sessionStorage.getItem('pCode');
+        const currentInternalCode = sessionStorage.getItem('internalCode') || sessionStorage.getItem('internal_code');
+
+       
+        if (storedQuizzes.length > 0 && (currentSessionPCode || currentInternalCode)) {
+          const quizPCode = storedQuizzes[0]?.p_code || (storedQuizzes[0] as any)?.pCode;
+          
+         
+          const cleanQuizCode = quizPCode ? String(quizPCode).trim() : '';
+          const cleanSessionPCode = currentSessionPCode ? String(currentSessionPCode).trim() : '';
+          const cleanInternalCode = currentInternalCode ? String(currentInternalCode).trim() : '';
+
+          const isMatch = 
+            cleanQuizCode === cleanSessionPCode || 
+            cleanQuizCode === cleanInternalCode ||
+            (!cleanSessionPCode && !cleanInternalCode);
+
+          if (cleanQuizCode && !isMatch) {
+            console.warn('환자 식별자 불일치: 이전 환자의 퀴즈 데이터를 세션에서 제거합니다.');
+            clearQuizSessionData();
+            storedQuizzes = [];
+          }
+        }
+
+        let storedIndex = parseInt(sessionStorage.getItem('currentQuizIndex') || '0', 10);
+        if (isNaN(storedIndex) || storedIndex < 0) storedIndex = 0;
+        if (storedQuizzes.length > 0 && storedIndex >= storedQuizzes.length) {
+          storedIndex = storedQuizzes.length - 1;
+        }
+
+        
+        if (storedQuizzes.length > 0 && storedQuizzes[storedIndex]) {
+          const currentQuizData = storedQuizzes[storedIndex] as any;
+          const rawCategory = currentQuizData?.quiz_category ?? currentQuizData?.quizCategory ?? currentQuizData?.category ?? '';
+          const cat = String(rawCategory).toLowerCase().trim();
+          const hasPhoto = Boolean(currentQuizData?.quiz_photo || currentQuizData?.quizPhoto);
+
+          if (['choice', '1', '객관식', 'multiple_choice'].includes(cat)) {
+            navigate('/patient-voicechat', { replace: true });
+            return;
+          } else if (['photo', '2', '사진', 'picture', 'image'].includes(cat) || hasPhoto) {
+            navigate('/patient-photo', { replace: true });
+            return;
+          }
+        }
+
+        setQuizList(storedQuizzes);
+        setCurrentIndex(storedIndex);
+      } catch (e) {
+        console.error('퀴즈 데이터 로딩 실패:', e);
+        setQuizList([]);
+      } finally {
+        setIsLoading(false);
       }
-      
-      setQuizList(storedQuizzes);
-      setCurrentIndex(storedIndex);
-    } catch (e) {
-      console.error('퀴즈 데이터 로딩 실패:', e);
-      setQuizList([]);
-    }
-  }, []);
+    };
+
+    loadQuizData();
+  }, [navigate]);
 
   const [isListening, setIsListening] = useState<boolean>(false);
   const [isHintOpen, setIsHintOpen] = useState<boolean>(false);
   const [isSubmitted, setIsSubmitted] = useState<boolean>(false);
   const [elapsedTime, setElapsedTime] = useState<string>('0.0');
   const [feedbackMessage, setFeedbackMessage] = useState<string>('잘 하셨어요!');
-
   const [thisQuizIsCorrect, setThisQuizIsCorrect] = useState<boolean | undefined>(undefined);
 
   const startTimeRef = useRef<number>(Date.now());
@@ -84,35 +156,19 @@ export default function S11_TextVoiceQuiz() {
   const [maxHintStepThisQuiz, setMaxHintStepThisQuiz] = useState<number>(0);
   const [isHintCountReflected, setIsHintCountReflected] = useState<boolean>(false);
 
-  
-  const [hintCount, setHintCount] = useState<number>(() => {
-    return Number(sessionStorage.getItem('totalHintCount') || 0);
-  });
-
- 
-  const [totalSolvedCount, setTotalSolvedCount] = useState<number>(() => {
-    return Number(sessionStorage.getItem('completedActivityCount') || 0);
-  });
-
-  
-  const [correctCount, setCorrectCount] = useState<number>(() => {
-    return Number(sessionStorage.getItem('correctQuizCount') || 0);
-  });
+  const [hintCount, setHintCount] = useState<number>(() => Number(sessionStorage.getItem('totalHintCount') || 0));
+  const [totalSolvedCount, setTotalSolvedCount] = useState<number>(() => Number(sessionStorage.getItem('completedActivityCount') || 0));
+  const [correctCount, setCorrectCount] = useState<number>(() => Number(sessionStorage.getItem('correctQuizCount') || 0));
 
   
   useEffect(() => {
-    const preventGoBack = () => {
-      window.history.pushState(null, '', window.location.href);
-    };
+    const preventGoBack = () => window.history.pushState(null, '', window.location.href);
     window.history.pushState(null, '', window.location.href);
     window.addEventListener('popstate', preventGoBack);
-
-    return () => {
-      window.removeEventListener('popstate', preventGoBack);
-    };
+    return () => window.removeEventListener('popstate', preventGoBack);
   }, []);
 
-  // 문항 전환 시 초기화
+  
   useEffect(() => {
     setIsSubmitted(false);
     setIsListening(false);
@@ -129,41 +185,13 @@ export default function S11_TextVoiceQuiz() {
     startTimeRef.current = Date.now();
   }, [currentIndex]);
 
-  if (!quizList) {
-    return (
-      <div style={{ width: '100%', minHeight: '100vh', backgroundColor: '#F8F9FA', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-        <h2>퀴즈를 불러오는 중입니다...</h2>
-      </div>
-    );
-  }
-
-  if (quizList.length === 0 || currentIndex >= quizList.length) {
-    return (
-      <div style={{ width: '100%', minHeight: '100vh', backgroundColor: '#F8F9FA', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: '20px' }}>
-        <h2>불러올 퀴즈가 없거나 진행 상태가 유효하지 않습니다.</h2>
-        <button 
-          onClick={() => {
-            sessionStorage.setItem('currentQuizIndex', '0');
-            sessionStorage.removeItem('completedActivityCount');
-            sessionStorage.removeItem('correctQuizCount');
-            sessionStorage.removeItem('totalHintCount');
-            navigate('/patient-home');
-          }} 
-          style={{ padding: '10px 20px', borderRadius: '20px', backgroundColor: '#4188ED', color: '#FFF', border: 'none', cursor: 'pointer' }}
-        >
-          홈으로 돌아가기
-        </button>
-      </div>
-    );
-  }
-
   const currentQuiz = quizList[currentIndex];
 
   const currentQuizComment = 
     currentQuiz?.quiz_comment || 
-    currentQuiz?.quizComment || 
-    currentQuiz?.question || 
-    '질문 내용이 없습니다.';
+    (currentQuiz as any)?.quizComment || 
+    (currentQuiz as any)?.question || 
+    (isLoading ? '퀴즈를 불러오는 중입니다...' : '질문 내용이 없습니다.');
 
   const hintsList = currentQuiz?.hints && currentQuiz.hints.length > 0 
     ? currentQuiz.hints 
@@ -171,44 +199,38 @@ export default function S11_TextVoiceQuiz() {
 
   const handleHintClick = () => {
     setIsHintOpen(true); 
-    if (maxHintStepThisQuiz === 0) {
-      setMaxHintStepThisQuiz(1);
-    }
+    if (maxHintStepThisQuiz === 0) setMaxHintStepThisQuiz(1);
   };
 
   const handleStepChange = (maxStep: number) => {
-    if (maxStep > maxHintStepThisQuiz) {
-      setMaxHintStepThisQuiz(maxStep);
-    }
+    if (maxStep > maxHintStepThisQuiz) setMaxHintStepThisQuiz(maxStep);
   };
 
-  
   const handleSuccessSubmit = async (finalDuration: string, answerText?: string) => {
+    if (!currentQuiz) return;
+
     const sessionSpent = (Date.now() - startTimeRef.current) / 1000;
     const totalSpentSeconds = (initialAccumulatedTimeRef.current + sessionSpent).toFixed(1);
 
-    const actualDuration = finalDuration !== '0.0' ? finalDuration : totalSpentSeconds;
-    setElapsedTime(actualDuration);
+    setElapsedTime(finalDuration !== '0.0' ? finalDuration : totalSpentSeconds);
 
     sessionStorage.removeItem('currentQuizElapsedTime');
     sessionStorage.removeItem('tempQuizHintStep');
 
-    const userAnswer = answerText || '';
-
     if (!isHintCountReflected) {
-      const addedCount = maxHintStepThisQuiz; 
-      const updatedHintTotal = hintCount + addedCount;
-      
+      const updatedHintTotal = hintCount + maxHintStepThisQuiz;
       setHintCount(updatedHintTotal);
       sessionStorage.setItem('totalHintCount', String(updatedHintTotal));
       setIsHintCountReflected(true);
     }
 
+    const rawSetId = currentQuiz.set_id ?? (currentQuiz as any)?.setId ?? sessionStorage.getItem('set_id') ?? sessionStorage.getItem('setId') ?? 1;
+
     const payloadData = {
       pCode: getSafePCode(currentQuiz),
-      setId: Number(currentQuiz.set_id || currentQuiz.setId || 1),
-      quizNum: Number(currentQuiz.quiz_num || currentQuiz.quizNum || 1),
-      userAnswer: userAnswer,
+      setId: Number(rawSetId),
+      quizNum: Number(currentQuiz.quiz_num || (currentQuiz as any)?.quizNum || 1),
+      userAnswer: answerText || '',
     };
 
     try {
@@ -223,14 +245,11 @@ export default function S11_TextVoiceQuiz() {
       
       setThisQuizIsCorrect(isCurrentCorrect);
 
-      
       if (!isSubmitted) {
-       
         const nextSolvedCount = totalSolvedCount + 1;
         setTotalSolvedCount(nextSolvedCount);
         sessionStorage.setItem('completedActivityCount', String(nextSolvedCount));
 
-        
         if (isCurrentCorrect) {
           const nextCorrectCount = correctCount + 1;
           setCorrectCount(nextCorrectCount);
@@ -244,7 +263,6 @@ export default function S11_TextVoiceQuiz() {
       console.error('답안 제출 API 오류:', error);
       setThisQuizIsCorrect(false);
 
-      
       if (!isSubmitted) {
         const nextSolvedCount = totalSolvedCount + 1;
         setTotalSolvedCount(nextSolvedCount);
@@ -254,22 +272,21 @@ export default function S11_TextVoiceQuiz() {
     }
   };
 
-  
   const handleNextPage = async (e?: React.MouseEvent<HTMLButtonElement>) => {
     if (e) e.preventDefault();
 
-   
-    if (!isSubmitted) {
+    if (!isSubmitted && currentQuiz) {
       setThisQuizIsCorrect(false);
 
       const pCode = getSafePCode(currentQuiz);
-      const setId = Number(currentQuiz.set_id || currentQuiz.setId || 1);
-      const quizNum = Number(currentQuiz.quiz_num || currentQuiz.quizNum || 1);
+      const rawSetId = currentQuiz.set_id ?? (currentQuiz as any)?.setId ?? sessionStorage.getItem('set_id') ?? sessionStorage.getItem('setId') ?? 1;
+      const setId = Number(rawSetId);
+      const quizNum = Number(currentQuiz.quiz_num || (currentQuiz as any)?.quizNum || 1);
 
       try {
         await submitQuizAnswer({ pCode, setId, quizNum, userAnswer: '' });
       } catch (error) {
-        console.error('주관식 퀴즈 스킵 알림 실패:', error);
+        console.error('퀴즈 스킵 제출 실패:', error);
       }
     }
 
@@ -278,42 +295,49 @@ export default function S11_TextVoiceQuiz() {
 
     const nextIndex = currentIndex + 1;
 
-    
+    // 마지막 문제일 경우 결과 제출
     if (nextIndex >= quizList.length) {
       try {
         const numericPCode = getNumericPCode(currentQuiz);
-        const finalSetId = Number(currentQuiz.set_id || currentQuiz.setId || 1);
+        const rawSetId = currentQuiz?.set_id ?? (currentQuiz as any)?.setId ?? sessionStorage.getItem('set_id') ?? sessionStorage.getItem('setId') ?? 1;
+        const finalSetId = Number(rawSetId);
         
-        
+        const validSolvedCount = Number(sessionStorage.getItem('completedActivityCount') || totalSolvedCount);
+        const validCorrectCount = Number(sessionStorage.getItem('correctQuizCount') || correctCount);
+        const totalHint = Number(sessionStorage.getItem('totalHintCount') || hintCount);
+
         const finalPayload: QuizResultPayload = {
           setId: finalSetId,
           pCode: numericPCode,
-          totalCount: totalSolvedCount, 
-          correctCount: correctCount,   
-          hint: hintCount,
+          totalCount: validSolvedCount, 
+          correctCount: validCorrectCount,   
+          hint: totalHint,
           caculate: "0", 
-          feedbackContent: `총 ${totalSolvedCount}문제 제출 중 ${correctCount}문제를 맞추셨습니다. 수고하셨습니다!`
+          feedbackContent: `총 ${validSolvedCount}문제 제출 중 ${validCorrectCount}문제를 맞추셨습니다.`
         };
 
         await submitQuizResult(finalPayload);
       } catch (err) {
-        console.error('전체 퀴즈 결과 제출 실패:', err);
+        console.error('전체 퀴즈 결과 최종 제출 실패:', err);
       }
 
       sessionStorage.setItem('todayActivityCompleted', 'true');
+      clearQuizSessionData();
+
       navigate('/patient-result');
       return;
     }
 
     sessionStorage.setItem('currentQuizIndex', String(nextIndex));
 
-    const nextQuiz = quizList[nextIndex];
+    const nextQuiz = quizList[nextIndex] as any;
     const rawCategory = nextQuiz?.quiz_category ?? nextQuiz?.quizCategory ?? nextQuiz?.category ?? '';
     const category = String(rawCategory).toLowerCase().trim();
+    const hasPhoto = Boolean(nextQuiz?.quiz_photo || nextQuiz?.quizPhoto);
 
-    if (category === 'choice' || category === '1' || category === '객관식') {
+    if (['choice', '1', '객관식', 'multiple_choice'].includes(category)) {
       navigate('/patient-voicechat');
-    } else if (category === 'photo' || category === '2' || category === '사진') {
+    } else if (['photo', '2', '사진', 'picture', 'image'].includes(category) || hasPhoto) {
       navigate('/patient-photo');
     } else {
       setCurrentIndex(nextIndex);
@@ -324,22 +348,41 @@ export default function S11_TextVoiceQuiz() {
   const handleQuit = (e?: React.MouseEvent<HTMLButtonElement>) => {
     if (e) e.preventDefault();
 
+    const targetIndex = isSubmitted ? currentIndex + 1 : currentIndex;
+
     if (!isSubmitted) {
       const sessionSpent = (Date.now() - startTimeRef.current) / 1000;
       const totalAccumulated = initialAccumulatedTimeRef.current + sessionSpent;
       sessionStorage.setItem('currentQuizElapsedTime', String(totalAccumulated));
       sessionStorage.setItem('tempQuizHintStep', String(maxHintStepThisQuiz));
-      sessionStorage.setItem('currentQuizIndex', String(currentIndex));
     } else {
       sessionStorage.removeItem('currentQuizElapsedTime');
       sessionStorage.removeItem('tempQuizHintStep');
-      const nextIdx = Math.min(currentIndex + 1, quizList.length - 1);
-      sessionStorage.setItem('currentQuizIndex', String(nextIdx));
     }
 
     sessionStorage.setItem('todayActivityQuit', 'true');
+    sessionStorage.setItem('currentQuizIndex', String(targetIndex));
+    sessionStorage.setItem('completedActivityCount', String(totalSolvedCount));
+
     navigate('/patient-home');
   };
+
+  if (!isLoading && quizList.length === 0) {
+    return (
+      <div style={{ width: '100%', minHeight: '100vh', backgroundColor: '#F8F9FA', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: '20px' }}>
+        <h2>진행 가능한 퀴즈가 없습니다.</h2>
+        <button 
+          onClick={() => {
+            clearQuizSessionData();
+            navigate('/patient-home');
+          }} 
+          style={{ padding: '10px 20px', borderRadius: '20px', backgroundColor: '#4188ED', color: '#FFF', border: 'none', cursor: 'pointer' }}
+        >
+          홈으로 돌아가기
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div style={{ width: '100%', minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Pretendard Variable', Pretendard, sans-serif", display: 'flex', flexDirection: 'column', alignItems: 'center', boxSizing: 'border-box', paddingBottom: '120px', position: 'relative' }}>
@@ -369,9 +412,7 @@ export default function S11_TextVoiceQuiz() {
         
         <button 
           type="button"
-          onClick={() => {
-            setIsListening(!isListening);
-          }}
+          onClick={() => setIsListening(!isListening)}
           style={{ width: '154px', height: '46px', borderRadius: '10px', padding: '6px 19px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', cursor: 'pointer', backgroundColor: isListening ? '#0F66E2' : '#4188ED0D', border: isListening ? '1px solid #DFDF87' : '1px solid #0F66E2', boxShadow: '0px 0px 4px 0px #4188ED', marginBottom: '26px' }}
         >
           <span style={{ fontWeight: 700, fontSize: '20px', color: isListening ? '#FFFFFF' : '#0F66E2' }}>

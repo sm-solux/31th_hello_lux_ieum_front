@@ -5,13 +5,31 @@ import Header from '../components/patientHeader';
 import QuizResultCard from '../components/quizResultCard';
 
 import { submitQuizAnswer, submitQuizResult, type QuizItem, type QuizResultPayload } from '../api/patientApi';
+import { getToken } from '../utils/auth';
 
 export default function S13_RecallVoiceChat() {
   const navigate = useNavigate();
 
   const [quizList, setQuizList] = useState<QuizItem[]>([]);
   const [currentIndex, setCurrentIndex] = useState<number>(0);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
 
+
+  const clearQuizSessionData = () => {
+    const keysToRemove = [
+      'quizList',
+      'currentQuizIndex',
+      'currentQuizElapsedTime',
+      'completedActivityCount',
+      'correctQuizCount',
+      'totalHintCount',
+      'totalHintId',
+      'tempQuizHintStep',
+    ];
+    keysToRemove.forEach((key) => sessionStorage.removeItem(key));
+  };
+
+ 
   const getSafePCode = (quizItem?: QuizItem) => {
     const sessionPCode = sessionStorage.getItem('p_code');
     if (sessionPCode && isNaN(Number(sessionPCode))) {
@@ -20,9 +38,13 @@ export default function S13_RecallVoiceChat() {
     if (quizItem?.p_code && isNaN(Number(quizItem.p_code))) {
       return String(quizItem.p_code);
     }
-    return sessionPCode || 'HH5N7S';
+    if (quizItem?.pCode && isNaN(Number(quizItem.pCode))) {
+      return String(quizItem.pCode);
+    }
+    return sessionPCode || quizItem?.p_code || quizItem?.pCode || 'HH5N7S';
   };
 
+  
   const getNumericPCode = (quizItem?: QuizItem): number => {
     if (quizItem?.p_code !== undefined && !isNaN(Number(quizItem.p_code))) {
       return Number(quizItem.p_code);
@@ -44,48 +66,84 @@ export default function S13_RecallVoiceChat() {
     return 1;
   };
 
- 
   useEffect(() => {
-    try {
-      const storedQuizzes: QuizItem[] = JSON.parse(sessionStorage.getItem('quizList') || '[]');
-      let storedIndex = parseInt(sessionStorage.getItem('currentQuizIndex') || '0', 10);
+    const loadQuizData = () => {
+      setIsLoading(true);
+      try {
+        
+        const token = getToken();
+        if (!token) {
+          console.warn('인증 토큰이 없습니다. 로그인 페이지로 이동합니다.');
+          navigate('/login', { replace: true });
+          return;
+        }
 
-      if (storedIndex >= storedQuizzes.length && storedQuizzes.length > 0) {
-        storedIndex = storedQuizzes.length - 1;
+        const rawStored = sessionStorage.getItem('quizList');
+        let parsedData = rawStored ? JSON.parse(rawStored) : [];
+
+        let storedQuizzes: QuizItem[] = Array.isArray(parsedData)
+          ? parsedData
+          : (parsedData?.data || parsedData?.quizzes || []);
+
+        let storedIndex = parseInt(sessionStorage.getItem('currentQuizIndex') || '0', 10);
+        if (isNaN(storedIndex) || storedIndex < 0) {
+          storedIndex = 0;
+        }
+
+        if (storedQuizzes.length > 0 && storedIndex >= storedQuizzes.length) {
+          storedIndex = storedQuizzes.length - 1;
+        }
+
+        
+        if (storedQuizzes.length > 0 && storedQuizzes[storedIndex]) {
+          const currentQuizData = storedQuizzes[storedIndex] as any;
+          const rawCategory = currentQuizData?.quizCategory ?? currentQuizData?.quiz_category ?? currentQuizData?.category ?? currentQuizData?.level ?? '';
+          const cat = String(rawCategory).toLowerCase().trim();
+          const hasPhoto = Boolean(currentQuizData?.quiz_photo || currentQuizData?.quizPhoto);
+
+          const isChoiceCategory = cat.includes('choice') || cat === '1' || cat.includes('객관식');
+
+          if (!isChoiceCategory) {
+            if (cat.includes('photo') || cat === '2' || cat.includes('사진') || hasPhoto) {
+              navigate('/patient-photo', { replace: true });
+              return;
+            } else if (cat.includes('text') || cat === '3' || cat.includes('단답') || cat.includes('주관식')) {
+              navigate('/patient-voicequiz', { replace: true });
+              return;
+            }
+          }
+        }
+
+        setQuizList(storedQuizzes);
+        setCurrentIndex(storedIndex);
+      } catch (e) {
+        console.error('퀴즈 데이터 로딩 실패:', e);
+        setQuizList([]);
+      } finally {
+        setIsLoading(false);
       }
+    };
 
-      setQuizList(storedQuizzes);
-      setCurrentIndex(storedIndex);
-    } catch (e) {
-      console.error('퀴즈 데이터 로딩 실패:', e);
-      setQuizList([]);
-    }
-  }, []);
+    loadQuizData();
+  }, [navigate]);
 
-  const currentQuiz = quizList[currentIndex] || {
-    p_code: getSafePCode(),
-    set_id: 1,
-    quiz_num: 1,
-    quiz_comment: '고향에서 가장 기억에 남는 장소는 어디인가요?',
-    options: ['슈퍼마켓', '집', '공원', '우물가'],
-  };
+  const currentQuiz = quizList[currentIndex];
 
   const currentQuestionText = 
     currentQuiz?.quiz_comment || 
     currentQuiz?.quizComment || 
     currentQuiz?.question || 
-    '문제를 불러오는 중입니다.';
+    (isLoading ? '퀴즈를 불러오는 중입니다...' : '등록된 퀴즈가 없습니다.');
 
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
   const [isSubmitted, setIsSubmitted] = useState<boolean>(false);
-  const isSubmittedRef = useRef<boolean>(false); 
+  const isSubmittedRef = useRef<boolean>(false);
 
   const [elapsedTime, setElapsedTime] = useState<string>('0.0');
   const [feedbackMessage, setFeedbackMessage] = useState<string>('잘 하셨어요!');
   
   const [thisQuizIsCorrect, setThisQuizIsCorrect] = useState<boolean | undefined>(undefined);
 
- 
   const [totalSolvedCount, setTotalSolvedCount] = useState<number>(() => {
     const saved = sessionStorage.getItem('completedActivityCount');
     return saved ? parseInt(saved, 10) : 0;
@@ -104,7 +162,7 @@ export default function S13_RecallVoiceChat() {
   const startTimeRef = useRef<number>(Date.now());
   const initialAccumulatedTimeRef = useRef<number>(0);
 
-
+ 
   useEffect(() => {
     const preventGoBack = () => {
       window.history.pushState(null, '', window.location.href);
@@ -117,10 +175,11 @@ export default function S13_RecallVoiceChat() {
     };
   }, []);
 
+ 
   useEffect(() => {
     setSelectedOption(null);
     setIsSubmitted(false);
-    isSubmittedRef.current = false; 
+    isSubmittedRef.current = false;
     setElapsedTime('0.0');
     setFeedbackMessage('잘 하셨어요!');
     setThisQuizIsCorrect(undefined);
@@ -130,16 +189,20 @@ export default function S13_RecallVoiceChat() {
     startTimeRef.current = Date.now();
   }, [currentIndex]);
 
-  const optionsList: string[] = currentQuiz.options || ['1번 옵션', '2번 옵션', '3번 옵션', '4번 옵션'];
-
+  const optionsList: string[] = currentQuiz?.options || [];
 
   const handleSubmit = async () => {
+    if (!currentQuiz) {
+      alert('제출할 퀴즈 정보가 없습니다.');
+      return;
+    }
+
     if (selectedOption === null) {
       alert('정답을 선택해 주세요!');
       return;
     }
 
-    if (isSubmittedRef.current) return; 
+    if (isSubmittedRef.current) return;
 
     setIsSubmitted(true);
     isSubmittedRef.current = true;
@@ -153,8 +216,8 @@ export default function S13_RecallVoiceChat() {
     const selectedAnswerText = optionsList[selectedOption];
     
     const pCode = getSafePCode(currentQuiz);
-    const setId = Number(currentQuiz.set_id || currentQuiz.setId || 1);
-    const quizNum = Number(currentQuiz.quiz_num || currentQuiz.quizNum || 1);
+    const setId = Number(currentQuiz?.set_id || currentQuiz?.setId || 1);
+    const quizNum = Number(currentQuiz?.quiz_num || currentQuiz?.quizNum || 1);
 
     const payloadData = {
       pCode,
@@ -185,32 +248,21 @@ export default function S13_RecallVoiceChat() {
     setTotalSolvedCount(nextSolvedCount);
     sessionStorage.setItem('completedActivityCount', String(nextSolvedCount));
 
-    
     let nextCorrectCount = correctCount;
     if (isCorrect) {
       nextCorrectCount = correctCount + 1;
       setCorrectCount(nextCorrectCount);
       sessionStorage.setItem('correctQuizCount', String(nextCorrectCount));
     }
-
-    
-    console.log('[S13 제출 완료]', {
-      totalSolvedCount: nextSolvedCount,
-      correctCount: nextCorrectCount,
-      isCorrect,
-      userAnswer: selectedAnswerText,
-    });
   };
 
- 
   const handleNextPage = async (e?: React.MouseEvent<HTMLButtonElement>) => {
     if (e) e.preventDefault();
 
-    
-    if (!isSubmittedRef.current) {
+    if (!isSubmittedRef.current && currentQuiz) {
       const pCode = getSafePCode(currentQuiz);
-      const setId = Number(currentQuiz.set_id || currentQuiz.setId || 1);
-      const quizNum = Number(currentQuiz.quiz_num || currentQuiz.quizNum || 1);
+      const setId = Number(currentQuiz?.set_id || currentQuiz?.setId || 1);
+      const quizNum = Number(currentQuiz?.quiz_num || currentQuiz?.quizNum || 1);
 
       const payloadData = {
         pCode,
@@ -224,12 +276,6 @@ export default function S13_RecallVoiceChat() {
       } catch (error) {
         console.error('스킵 답안 제출 API 오류:', error);
       }
-
-     
-      console.log('[S13 스킵 - 카운트 미증가]', {
-        totalSolvedCount,
-        correctCount,
-      });
     }
 
     sessionStorage.removeItem('currentQuizElapsedTime');
@@ -240,7 +286,7 @@ export default function S13_RecallVoiceChat() {
     if (nextIndex >= quizList.length) {
       try {
         const numericPCode = getNumericPCode(currentQuiz);
-        const finalSetId = Number(currentQuiz.set_id || currentQuiz.setId || 1);
+        const finalSetId = Number(currentQuiz?.set_id || currentQuiz?.setId || 1);
         
         const validSolvedCount = Number(sessionStorage.getItem('completedActivityCount') || totalSolvedCount);
         const validCorrectCount = Number(sessionStorage.getItem('correctQuizCount') || correctCount);
@@ -256,20 +302,14 @@ export default function S13_RecallVoiceChat() {
           feedbackContent: "오늘도 퀴즈를 잘 마쳤습니다!"
         };
 
-        // 🔍 [Console Log] 최종 API 제출 전 전체 통계 로그
-        console.log('[S13 전체 퀴즈 최종 결과 제출]', {
-          totalCount: validSolvedCount,
-          correctCount: validCorrectCount,
-          hint: totalHint,
-          payload: finalPayload,
-        });
-
         await submitQuizResult(finalPayload);
       } catch (err) {
         console.error('전체 퀴즈 결과 제출 실패:', err);
       }
 
       sessionStorage.setItem('todayActivityCompleted', 'true');
+      clearQuizSessionData();
+
       navigate('/patient-result');
       return;
     }
@@ -280,12 +320,12 @@ export default function S13_RecallVoiceChat() {
     const rawCategory = nextQuiz?.quizCategory ?? nextQuiz?.quiz_category ?? nextQuiz?.category ?? 'choice';
     const category = String(rawCategory).toLowerCase().trim();
 
-    if (category === 'choice' || category === '1' || category === '객관식') {
+    if (category.includes('choice') || category === '1' || category.includes('객관식')) {
       setCurrentIndex(nextIndex);
       window.scrollTo(0, 0);
-    } else if (category === 'photo' || category === '2' || category === '사진') {
+    } else if (category.includes('photo') || category === '2' || category.includes('사진')) {
       navigate('/patient-photo');
-    } else if (category === 'text' || category === '3' || category === '단답형' || category === '주관식') {
+    } else if (category.includes('text') || category === '3' || category.includes('단답형') || category.includes('주관식')) {
       navigate('/patient-voicequiz');
     } else {
       setCurrentIndex(nextIndex);
@@ -312,6 +352,23 @@ export default function S13_RecallVoiceChat() {
 
     navigate('/patient-home');
   };
+
+  if (!isLoading && quizList.length === 0) {
+    return (
+      <div style={{ width: '100%', minHeight: '100vh', backgroundColor: '#F8F9FA', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: '20px' }}>
+        <h2>진행 가능한 퀴즈가 없습니다.</h2>
+        <button 
+          onClick={() => {
+            clearQuizSessionData();
+            navigate('/patient-home');
+          }} 
+          style={{ padding: '10px 20px', borderRadius: '20px', backgroundColor: '#4188ED', color: '#FFF', border: 'none', cursor: 'pointer' }}
+        >
+          홈으로 돌아가기
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -388,54 +445,62 @@ export default function S13_RecallVoiceChat() {
           </p>
 
           <div key={currentIndex} style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '18px' }}>
-            {optionsList.map((optionText, idx) => {
-              const isSelected = selectedOption === idx;
-              return (
-                <button
-                  key={idx}
-                  disabled={isSubmitted}
-                  onClick={() => setSelectedOption(idx)}
-                  style={{
-                    width: '648px',
-                    height: '86px',
-                    borderRadius: '10px',
-                    border: isSelected ? '1px solid #DFDF87' : '1px solid #8E8E98',
-                    backgroundColor: isSelected ? '#1566E0' : '#F8F9FA',
-                    color: isSelected ? '#FFFFFF' : '#0D0D0D',
-                    fontWeight: 400,
-                    fontSize: '22px',
-                    textAlign: 'left',
-                    padding: '22px 32px',
-                    boxSizing: 'border-box',
-                    cursor: isSubmitted ? 'default' : 'pointer',
-                    opacity: isSubmitted && !isSelected ? 0.5 : 1,
-                    boxShadow: isSelected ? '0px 0px 4px 0px #2073E8' : '0px 0px 4px 0px #797980',
-                    transition: 'all 0.2s ease',
-                    display: 'flex',
-                    alignItems: 'center',
-                  }}
-                >
-                  {`${idx + 1}번  ${optionText}`}
-                </button>
-              );
-            })}
+            {optionsList.length > 0 ? (
+              optionsList.map((optionText, idx) => {
+                const isSelected = selectedOption === idx;
+                return (
+                  <button
+                    key={idx}
+                    disabled={isSubmitted}
+                    onClick={() => setSelectedOption(idx)}
+                    style={{
+                      width: '648px',
+                      height: '86px',
+                      borderRadius: '10px',
+                      border: isSelected ? '1px solid #DFDF87' : '1px solid #8E8E98',
+                      backgroundColor: isSelected ? '#1566E0' : '#F8F9FA',
+                      color: isSelected ? '#FFFFFF' : '#0D0D0D',
+                      fontWeight: 400,
+                      fontSize: '22px',
+                      textAlign: 'left',
+                      padding: '22px 32px',
+                      boxSizing: 'border-box',
+                      cursor: isSubmitted ? 'default' : 'pointer',
+                      opacity: isSubmitted && !isSelected ? 0.5 : 1,
+                      boxShadow: isSelected ? '0px 0px 4px 0px #2073E8' : '0px 0px 4px 0px #797980',
+                      transition: 'all 0.2s ease',
+                      display: 'flex',
+                      alignItems: 'center',
+                    }}
+                  >
+                    {`${idx + 1}번  ${optionText}`}
+                  </button>
+                );
+              })
+            ) : (
+              !isLoading && (
+                <div style={{ padding: '20px', color: '#8E8E98', fontSize: '18px' }}>
+                  선택할 수 있는 보기가 없습니다.
+                </div>
+              )
+            )}
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'center', width: '100%', marginTop: '60px', marginBottom: '20px' }}>
             <button
               onClick={handleSubmit}
-              disabled={isSubmitted}
+              disabled={isSubmitted || optionsList.length === 0}
               style={{
                 width: '139px',
                 height: '46px',
                 borderRadius: '10px',
-                backgroundColor: isSubmitted ? '#8E8E98' : '#0F66E2',
+                backgroundColor: isSubmitted || optionsList.length === 0 ? '#8E8E98' : '#0F66E2',
                 border: '1px solid #DFDF87',
                 boxShadow: '0px 0px 4px 0px #4188ED',
                 fontWeight: 700,
                 fontSize: '18px',
                 color: '#FFFFFF',
-                cursor: isSubmitted ? 'default' : 'pointer',
+                cursor: isSubmitted || optionsList.length === 0 ? 'default' : 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
