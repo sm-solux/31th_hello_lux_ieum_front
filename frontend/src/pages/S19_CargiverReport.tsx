@@ -36,7 +36,6 @@ const DUMMY_PATIENT = {
 const INDICATORS = [
   { key: '답변 성공률', checkImg: checkboxB, color: '#4188ED' },
   { key: '힌트 사용', checkImg: checkboxG, color: '#27AE60' },
-  { key: '응답 시간', checkImg: checkboxY, color: '#DFDF87' },
 ];
 
 const DATES_DEFAULT: string[] = [];
@@ -44,14 +43,12 @@ const DATES_DEFAULT: string[] = [];
 const LINE_DATA_DEFAULT: Record<string, number[]> = {
   '답변 성공률': [],
   '힌트 사용': [],
-  '응답 시간': [],
 };
 
 const PERIOD_OPTIONS = ['최근 7일', '최근 30일', '직접 선택'];
 
 const STATS_DEFAULT = [
   { label: '7일 평균 성공률', value: '-' },
-  { label: '평균 응답 시간', value: '-' },
   { label: '일평균 힌트 사용', value: '-' },
 ];
 
@@ -159,7 +156,6 @@ export default function S19_CargiverReport() {
             ...prev,
             '답변 성공률': successScores,
             '힌트 사용': hintCounts,
-            '응답 시간': [],
           }));
 
           
@@ -168,7 +164,6 @@ export default function S19_CargiverReport() {
           
           setStats([
             { label: '7일 평균 성공률', value: `${avgScore}%` },
-            { label: '평균 응답 시간', value: '—' },
             { label: '일평균 힌트 사용', value: `${avgHint}회` },
           ]);
 
